@@ -50,6 +50,35 @@ def stratified_split(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def build_model(feature_columns: list[str]) -> GridSearchCV:
+    base_model = build_pipeline(feature_columns)
+
+    param_grid = [
+        {
+            "regressor__n_estimators": [30, 60],
+            "regressor__max_features": [4, 6, 8],
+        },
+        {
+            "regressor__bootstrap": [False],
+            "regressor__n_estimators": [30],
+            "regressor__max_features": [4, 6],
+        },
+    ]
+
+    return GridSearchCV(
+        estimator=base_model,
+        param_grid=param_grid,
+        cv=5,
+        scoring="neg_root_mean_squared_error",
+        n_jobs=1,
+    )
+
+
+def build_pipeline(
+    feature_columns: list[str],
+    *,
+    n_estimators: int = 80,
+    max_features: int | None = 8,
+) -> Pipeline:
     numeric_columns = [
         column for column in feature_columns if column not in CATEGORICAL_COLUMNS
     ]
@@ -71,29 +100,19 @@ def build_model(feature_columns: list[str]) -> GridSearchCV:
     model = Pipeline(
         steps=[
             ("preprocessing", preprocessing),
-            ("regressor", RandomForestRegressor(random_state=RANDOM_STATE)),
+            (
+                "regressor",
+                RandomForestRegressor(
+                    n_estimators=n_estimators,
+                    max_features=max_features,
+                    random_state=RANDOM_STATE,
+                    n_jobs=1,
+                ),
+            ),
         ]
     )
 
-    param_grid = [
-        {
-            "regressor__n_estimators": [30, 60],
-            "regressor__max_features": [4, 6, 8],
-        },
-        {
-            "regressor__bootstrap": [False],
-            "regressor__n_estimators": [30],
-            "regressor__max_features": [4, 6],
-        },
-    ]
-
-    return GridSearchCV(
-        estimator=model,
-        param_grid=param_grid,
-        cv=5,
-        scoring="neg_root_mean_squared_error",
-        n_jobs=-1,
-    )
+    return model
 
 
 def evaluate(model: Pipeline, features: pd.DataFrame, labels: pd.Series) -> dict[str, float]:
@@ -106,7 +125,7 @@ def evaluate(model: Pipeline, features: pd.DataFrame, labels: pd.Series) -> dict
     }
 
 
-def train() -> tuple[Pipeline, dict[str, object]]:
+def train(*, tune: bool = True) -> tuple[Pipeline, dict[str, object]]:
     data = load_data()
     train_set, test_set = stratified_split(data)
 
@@ -115,12 +134,22 @@ def train() -> tuple[Pipeline, dict[str, object]]:
     test_features = test_set.drop(TARGET_COLUMN, axis=1)
     test_labels = test_set[TARGET_COLUMN].copy()
 
-    search = build_model(list(train_features.columns))
-    search.fit(train_features, train_labels)
-    best_model = search.best_estimator_
+    if tune:
+        search = build_model(list(train_features.columns))
+        search.fit(train_features, train_labels)
+        best_model = search.best_estimator_
+        best_params = search.best_params_
+    else:
+        best_model = build_pipeline(list(train_features.columns))
+        best_model.fit(train_features, train_labels)
+        best_params = {
+            "regressor__n_estimators": 80,
+            "regressor__max_features": 8,
+        }
 
     metrics = {
-        "best_params": search.best_params_,
+        "mode": "grid_search" if tune else "fast_startup",
+        "best_params": best_params,
         "train": evaluate(best_model, train_features, train_labels),
         "test": evaluate(best_model, test_features, test_labels),
     }

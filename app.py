@@ -35,7 +35,7 @@ OCEAN_PROXIMITY_OPTIONS = [
 @st.cache_resource(show_spinner="Training model for the first run...")
 def load_model():
     if not Path(MODEL_PATH).exists():
-        model, _ = train()
+        model, _ = train(tune=False)
         return model
     return joblib.load(MODEL_PATH)
 

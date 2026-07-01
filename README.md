@@ -1,7 +1,5 @@
 # California House Price Prediction
 
-![CI](https://github.com/arzunajafzade/house_price_prediction/actions/workflows/ci.yml/badge.svg)
-
 Production-minded machine learning project for predicting California median house values from district-level housing features.
 
 The original exploratory notebook was converted into a reproducible Python project with a training pipeline, saved model artifacts, evaluation metrics, and a Streamlit inference app.
@@ -29,13 +27,6 @@ The original exploratory notebook was converted into a reproducible Python proje
 - Validation:
   - stratified train/test split based on median income bands
   - grid search with cross-validation
-
-Latest local evaluation:
-
-| Split | RMSE | MAE | R2 |
-| --- | ---: | ---: | ---: |
-| Train | 18,622 | 12,048 | 0.974 |
-| Test | 46,937 | 31,029 | 0.831 |
 
 ## Run Locally
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import joblib
@@ -8,158 +7,110 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GridSearchCV, StratifiedShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
-
 
 DATA_PATH = Path("housing.csv")
-ARTIFACT_DIR = Path("artifacts")
-MODEL_PATH = ARTIFACT_DIR / "house_price_model.joblib"
-METRICS_PATH = ARTIFACT_DIR / "metrics.json"
-TARGET_COLUMN = "median_house_value"
-CATEGORICAL_COLUMNS = ["ocean_proximity"]
-RANDOM_STATE = 42
+ARTIFACTS_DIR = Path("artifacts")
+MODEL_PATH = ARTIFACTS_DIR / "house_price_model.joblib"
+
+NUMERIC_FEATURES = [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+]
+CATEGORICAL_FEATURES = ["ocean_proximity"]
+TARGET = "median_house_value"
 
 
-def load_data(path: Path = DATA_PATH) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Dataset not found: {path}")
-    return pd.read_csv(path)
-
-
-def stratified_split(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    prepared = data.copy()
-    prepared["income_cat"] = pd.cut(
-        prepared["median_income"],
-        bins=[0.0, 1.5, 3.0, 4.5, 6.0, np.inf],
+def _stratified_split(df: pd.DataFrame):
+    """Split train/test using income bands so both sets are representative."""
+    income_bins = pd.cut(
+        df["median_income"],
+        bins=[0, 1.5, 3.0, 4.5, 6.0, np.inf],
         labels=[1, 2, 3, 4, 5],
     )
-
-    splitter = StratifiedShuffleSplit(
-        n_splits=1,
-        test_size=0.2,
-        random_state=RANDOM_STATE,
-    )
-    train_idx, test_idx = next(splitter.split(prepared, prepared["income_cat"]))
-    train_set = prepared.loc[train_idx].drop("income_cat", axis=1)
-    test_set = prepared.loc[test_idx].drop("income_cat", axis=1)
-    return train_set, test_set
+    splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train_idx, test_idx = next(splitter.split(df, income_bins))
+    return df.iloc[train_idx].copy(), df.iloc[test_idx].copy()
 
 
-def build_model(feature_columns: list[str]) -> GridSearchCV:
-    base_model = build_pipeline(feature_columns)
-
-    param_grid = [
-        {
-            "regressor__n_estimators": [30, 60],
-            "regressor__max_features": [4, 6, 8],
-        },
-        {
-            "regressor__bootstrap": [False],
-            "regressor__n_estimators": [30],
-            "regressor__max_features": [4, 6],
-        },
-    ]
-
-    return GridSearchCV(
-        estimator=base_model,
-        param_grid=param_grid,
-        cv=5,
-        scoring="neg_root_mean_squared_error",
-        n_jobs=1,
-    )
-
-
-def build_pipeline(
-    feature_columns: list[str],
-    *,
-    n_estimators: int = 80,
-    max_features: int | None = 8,
-) -> Pipeline:
-    numeric_columns = [
-        column for column in feature_columns if column not in CATEGORICAL_COLUMNS
-    ]
-
+def _build_pipeline() -> Pipeline:
     numeric_pipeline = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
         ]
     )
-
-    preprocessing = ColumnTransformer(
+    categorical_pipeline = Pipeline(
+        steps=[("onehot", OneHotEncoder(handle_unknown="ignore"))]
+    )
+    preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_pipeline, numeric_columns),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL_COLUMNS),
+            ("num", numeric_pipeline, NUMERIC_FEATURES),
+            ("cat", categorical_pipeline, CATEGORICAL_FEATURES),
         ]
     )
-
     model = Pipeline(
         steps=[
-            ("preprocessing", preprocessing),
-            (
-                "regressor",
-                RandomForestRegressor(
-                    n_estimators=n_estimators,
-                    max_features=max_features,
-                    random_state=RANDOM_STATE,
-                    n_jobs=1,
-                ),
-            ),
+            ("preprocess", preprocessor),
+            ("regressor", RandomForestRegressor(random_state=42)),
         ]
     )
-
     return model
 
 
-def evaluate(model: Pipeline, features: pd.DataFrame, labels: pd.Series) -> dict[str, float]:
-    predictions = model.predict(features)
-    mse = mean_squared_error(labels, predictions)
-    return {
-        "rmse": float(np.sqrt(mse)),
-        "mae": float(mean_absolute_error(labels, predictions)),
-        "r2": float(r2_score(labels, predictions)),
-    }
+def _evaluate(model: Pipeline, X: pd.DataFrame, y: pd.Series) -> dict:
+    preds = model.predict(X)
+    rmse = mean_squared_error(y, preds, squared=False)
+    mae = mean_absolute_error(y, preds)
+    r2 = r2_score(y, preds)
+    return {"rmse": rmse, "mae": mae, "r2": r2}
 
 
-def train(*, tune: bool = True) -> tuple[Pipeline, dict[str, object]]:
-    data = load_data()
-    train_set, test_set = stratified_split(data)
+def train(tune: bool = False):
+    """Train the model and save it to MODEL_PATH. Returns (model, metrics)."""
+    df = pd.read_csv(DATA_PATH)
 
-    train_features = train_set.drop(TARGET_COLUMN, axis=1)
-    train_labels = train_set[TARGET_COLUMN].copy()
-    test_features = test_set.drop(TARGET_COLUMN, axis=1)
-    test_labels = test_set[TARGET_COLUMN].copy()
+    train_df, test_df = _stratified_split(df)
+    X_train, y_train = train_df.drop(columns=[TARGET]), train_df[TARGET]
+    X_test, y_test = test_df.drop(columns=[TARGET]), test_df[TARGET]
+
+    model = _build_pipeline()
 
     if tune:
-        search = build_model(list(train_features.columns))
-        search.fit(train_features, train_labels)
-        best_model = search.best_estimator_
-        best_params = search.best_params_
-    else:
-        best_model = build_pipeline(list(train_features.columns))
-        best_model.fit(train_features, train_labels)
-        best_params = {
-            "regressor__n_estimators": 80,
-            "regressor__max_features": 8,
+        param_grid = {
+            "regressor__n_estimators": [100, 200],
+            "regressor__max_depth": [None, 10, 20],
         }
+        search = GridSearchCV(
+            model, param_grid, cv=3, scoring="neg_root_mean_squared_error"
+        )
+        search.fit(X_train, y_train)
+        model = search.best_estimator_
+    else:
+        model.fit(X_train, y_train)
 
     metrics = {
-        "mode": "grid_search" if tune else "fast_startup",
-        "best_params": best_params,
-        "train": evaluate(best_model, train_features, train_labels),
-        "test": evaluate(best_model, test_features, test_labels),
+        "train": _evaluate(model, X_train, y_train),
+        "test": _evaluate(model, X_test, y_test),
     }
 
-    ARTIFACT_DIR.mkdir(exist_ok=True)
-    joblib.dump(best_model, MODEL_PATH)
-    METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    return best_model, metrics
+    ARTIFACTS_DIR.mkdir(exist_ok=True)
+    joblib.dump(model, MODEL_PATH)
+
+    return model, metrics
 
 
 if __name__ == "__main__":
-    _, run_metrics = train()
-    print(json.dumps(run_metrics, indent=2))
+    trained_model, results = train(tune=False)
+    print("Train metrics:", results["train"])
+    print("Test metrics:", results["test"])

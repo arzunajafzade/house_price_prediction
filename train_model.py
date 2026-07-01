@@ -70,10 +70,11 @@ def _build_pipeline() -> Pipeline:
 
 def _evaluate(model: Pipeline, X: pd.DataFrame, y: pd.Series) -> dict:
     preds = model.predict(X)
-    rmse = mean_squared_error(y, preds, squared=False)
+    mse = mean_squared_error(y, preds)
+    rmse = np.sqrt(mse)
     mae = mean_absolute_error(y, preds)
     r2 = r2_score(y, preds)
-    return {"rmse": rmse, "mae": mae, "r2": r2}
+    return {"rmse": float(rmse), "mae": float(mae), "r2": float(r2)}
 
 
 def train(tune: bool = False):

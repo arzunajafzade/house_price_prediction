@@ -3,12 +3,16 @@ import pandas as pd
 import numpy as np
 import joblib
 
-# Load the trained model
-# Note: Ensure 'model.pkl' is in the same directory as this file
-try:
-    model = joblib.load('model.pkl')
-except:
-    st.error("Model file 'model.pkl' not found. Please save your model from the notebook first.")
+# Cache the model loading for better performance
+@st.cache_resource
+def load_model():
+    try:
+        return joblib.load('model.pkl')
+    except:
+        st.error("Model file 'model.pkl' not found. Please save your model from the notebook first.")
+        return None
+
+model = load_model()
 
 st.set_page_config(page_title="California House Price Predictor", page_icon="🏠")
 
